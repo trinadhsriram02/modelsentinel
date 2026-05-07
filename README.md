@@ -1,22 +1,24 @@
 # 🔍 ModelSentinel — AI Model Supply Chain Security Scanner
 
-Scans PyTorch models for backdoors and poisoned weights before they reach production pipelines. The SolarWinds attack vector for AI — solved.
+Scans PyTorch models for backdoors before they reach production. The SolarWinds attack vector for AI — solved.
 
 > **Live Demo:** https://huggingface.co/spaces/trinadhsriram02/ModelSentinel
 >
-> **Live API:** https://trinadhsriram02-modelsentinel-api.hf.space/docs
+> **Live API Docs:** https://trinadhsriram02-modelsentinel-api.hf.space/docs
 >
 > **Demo Video:** [Watch here](paste-loom-link-here)
+>
+> **Project 1:** [AutonomousSOC](https://github.com/trinadhsriram02/autonomous-soc)
 
 ---
 
 ## 🚨 The Problem
 
-Millions of engineers download pre-trained models from HuggingFace and model hubs daily. A backdoored model — one that misclassifies inputs when a specific trigger pattern is present — can silently compromise production AI systems. There is currently no standardized tool to detect this at the CI/CD level.
+Millions of engineers download pre-trained models from HuggingFace daily. A backdoored model misclassifies inputs when a specific trigger pattern is present — silently compromising production AI systems. No standardized tool existed to detect this at the CI/CD level.
 
 ## ✅ The Solution
 
-ModelSentinel uses two state-of-the-art detection algorithms from academic research to scan models before deployment, and blocks the CI/CD pipeline if a threat is detected.
+ModelSentinel uses two peer-reviewed detection algorithms to scan models before deployment and automatically blocks the CI/CD pipeline if a threat is detected.
 
 ---
 
@@ -25,11 +27,12 @@ ModelSentinel uses two state-of-the-art detection algorithms from academic resea
 - Detects backdoored AI models using Neural Cleanse algorithm
 - Detects poisoned training data using Activation Clustering
 - Generates human-readable threat reports using Groq LLaMA 3.1
-- Provides risk score 0-100 with deployment recommendation
+- Risk score 0-100 with clear deployment recommendation
 - Blocks GitHub CI/CD pipeline automatically if risk exceeds threshold
+- Async scan queue — returns job ID instantly, scans in background
 - REST API for integration with any MLOps pipeline
-- Full authentication with JWT and RBAC
-- Persistent scan history with audit trails
+- JWT authentication with Role-Based Access Control
+- Full audit trail of all scans with analyst attribution
 
 ---
 
@@ -37,35 +40,30 @@ ModelSentinel uses two state-of-the-art detection algorithms from academic resea
 
 ```mermaid
 graph TD
-    A[Model File .pt/.pth/.bin] --> B[ModelSentinel API]
-    B --> C[Model Loader + Metadata Extractor]
-    C --> D[Neural Cleanse Scanner]
-    C --> E[Activation Clustering Scanner]
+    A[Model File .pt .pth .bin] --> B[ModelSentinel FastAPI]
+    B --> C[Model Loader]
+    C --> D[Neural Cleanse]
+    C --> E[Activation Clustering]
     D --> F[Anomaly Index Score]
     E --> G[Cluster Separation Score]
-    F --> H[Report Generator - Groq LLM]
+    F --> H[Groq LLM Report Generator]
     G --> H
     H --> I{Risk Score 0-100}
-    I -->|Above 40| J[BLOCK DEPLOYMENT]
-    I -->|Below 40| K[APPROVE DEPLOYMENT]
-    J --> L[GitHub Action Fails CI]
+    I -->|Above 40| J[BLOCK — CI/CD Fails]
+    I -->|Below 40| K[APPROVE — Safe to Deploy]
+    J --> L[Streamlit Dashboard]
     K --> L
-    L --> M[Streamlit Dashboard]
 ```
 
 ---
 
 ## 🔬 Detection Methods
 
-### Method 1 — Neural Cleanse
-Reverse-engineers the smallest trigger pattern that causes the model to misclassify any input as a target class. A backdoored class requires an unusually small trigger — this anomaly is detected via statistical outlier analysis.
+### Neural Cleanse — Wang et al. IEEE S&P 2019
+Reverse-engineers the smallest trigger pattern that causes misclassification. A backdoored class needs an unusually small trigger — detected via statistical anomaly analysis.
 
-**Research basis:** Wang et al., "Neural Cleanse: Identifying and Mitigating Backdoor Attacks in Neural Networks" — IEEE S&P 2019
-
-### Method 2 — Activation Clustering
-Extracts activations from the penultimate layer and clusters them using K-Means. A clean model produces one tight cluster per class. A backdoored model produces two clusters for the target class — one for clean inputs and one for poisoned inputs.
-
-**Research basis:** Chen et al., "Detecting Backdoor Attacks on Deep Neural Networks by Activation Clustering" — AAAI Workshop 2019
+### Activation Clustering — Chen et al. AAAI 2019
+Extracts activations from the penultimate layer and clusters them. A clean model → one cluster per class. A backdoored model → two clusters for the target class.
 
 ---
 
@@ -74,103 +72,69 @@ Extracts activations from the penultimate layer and clusters them using K-Means.
 | Layer | Technology |
 |-------|-----------|
 | Detection | PyTorch, Neural Cleanse, Activation Clustering |
-| Interpretability | Captum, scikit-learn KMeans, PCA |
+| ML Tools | scikit-learn KMeans, PCA, numpy |
 | Report Engine | Groq LLaMA 3.1 8B |
-| Backend | FastAPI, Python 3.11 |
+| Backend | FastAPI, Python 3.11, aiofiles |
+| Async | asyncio, ThreadPoolExecutor, TTLCache |
 | Frontend | Streamlit |
-| Auth | JWT, SHA256 + salt hashing |
+| Auth | JWT Tokens, SHA256 + salt hashing |
 | Database | SQLite |
 | CI/CD | GitHub Actions |
-| DevOps | Docker, HuggingFace Spaces |
+| Cloud | Docker, HuggingFace Spaces 16GB RAM |
 
 ---
 
 ## 📊 Evaluation Results
 
-| Test | Model Type | Verdict | Risk Score | Correct |
-|------|-----------|---------|------------|---------|
+| Test | Model | Verdict | Risk Score | Correct |
+|------|-------|---------|------------|---------|
 | 1 | Backdoored ResNet18 | BACKDOORED | 87/100 | ✅ |
 | 2 | Clean ResNet18 | CLEAN | 12/100 | ✅ |
-| 3 | Backdoored VGG16 | SUSPICIOUS | 65/100 | ✅ |
-| 4 | Clean VGG16 | CLEAN | 18/100 | ✅ |
+| 3 | Backdoored ResNet18 class 5 | BACKDOORED | 79/100 | ✅ |
+| 4 | Clean ResNet18 normal init | CLEAN | 8/100 | ✅ |
 
-Detection accuracy on test set: **100%**
-
----
-
-## ✅ Prerequisites
-
-| Tool | Version | Download |
-|------|---------|----------|
-| Python | 3.10+ | https://www.python.org/downloads |
-| pip | with Python | — |
-| Git | any | https://git-scm.com/downloads |
+Run your own evaluation: `python -m src.evaluation.evaluate`
 
 ---
 
 ## 🚀 Setup
 
-### 1. Clone
+### Prerequisites
+| Tool | Version |
+|------|---------|
+| Python | 3.10+ |
+| pip | with Python |
+| Git | any |
+
+### Install
 ```bash
 git clone https://github.com/trinadhsriram02/modelsentinel.git
 cd modelsentinel
-```
-
-### 2. Virtual environment
-```bash
 python -m venv venv
-venv\Scripts\activate.bat   # Windows
-source venv/bin/activate     # Mac/Linux
-```
-
-### 3. Install
-```bash
+venv\Scripts\activate.bat       # Windows
+source venv/bin/activate         # Mac/Linux
 pip install -r requirements.txt
 ```
 
-### 4. Environment variables
-```bash
-cp .env.example .env
-```
-Fill in `.env`:
-GROQ_API_KEY=your_groq_key
-JWT_SECRET_KEY=your_jwt_secret
+### Environment variables
+Create `.env` file:
+GROQ_API_KEY=your_groq_key_from_console.groq.com
+JWT_SECRET_KEY=make_up_any_long_random_string
 
-### 5. Start API
+### Run
 ```bash
+# Terminal 1
 python -m src.api.main
-```
 
-### 6. Start dashboard
-```bash
+# Terminal 2
 streamlit run dashboard.py
 ```
 
-### 7. Create admin account
-Go to `http://localhost:8000/docs` → POST /signup
+Open `http://localhost:8501` → Sign up → Login → Run Test Scan
 
 ---
 
-## 📡 API Endpoints
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | / | Health check | No |
-| GET | /health | System status | No |
-| POST | /signup | Create account | No |
-| POST | /login | Get JWT token | No |
-| POST | /scan | Scan uploaded model | Analyst+ |
-| POST | /scan/test | Scan test models | Analyst+ |
-| GET | /scan/{id} | Get scan result | Yes |
-| GET | /scans | Scan history | Yes |
-| GET | /scans/stats | Statistics | Yes |
-| GET | /docs | API documentation | No |
-
----
-
-## 🔧 GitHub Action Usage
-
-Add to your repository's workflow to automatically scan models:
+## 🔧 GitHub Action — Block deployment automatically
 
 ```yaml
 - name: Scan AI Model
@@ -179,23 +143,37 @@ Add to your repository's workflow to automatically scan models:
     model_path: models/my_model.pth
     risk_threshold: 40
     num_classes: 10
-    fail_on_detection: true
   env:
     GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 ```
 
-This will block your deployment if the model's risk score exceeds 40.
+---
+
+## 📡 API Endpoints
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | / | Health check | No |
+| POST | /signup | Create account | No |
+| POST | /login | Get JWT token | No |
+| POST | /scan | Scan model (sync) | Analyst+ |
+| POST | /scan/queue | Scan model (async) | Analyst+ |
+| POST | /scan/test | Scan test models | Analyst+ |
+| GET | /scan/{id} | Get scan result | Yes |
+| GET | /scans | Scan history | Yes |
+| GET | /scans/stats | Statistics | Yes |
+| GET | /attacks/known | Known attack patterns | Yes |
+| GET | /docs | Interactive API docs | No |
 
 ---
 
-## 🔒 Security Features
+## 👥 Roles
 
-- JWT authentication with 8-hour expiry
-- Role-based access control — Admin, Analyst, Read-Only
-- SHA256 + salt password hashing
-- Parameterized SQL queries — zero injection risk
-- Strong password validation with name checks
-- API keys in environment variables — never in code
+| Role | Scan Models | View Results | Manage Users |
+|------|-------------|--------------|--------------|
+| Admin | ✅ | ✅ | ✅ |
+| Analyst | ✅ | ✅ | ❌ |
+| Read-Only | ❌ | ✅ | ❌ |
 
 ---
 
@@ -203,26 +181,42 @@ This will block your deployment if the model's risk score exceeds 40.
 modelsentinel/
 ├── src/
 │   ├── scanner/
-│   │   ├── model_loader.py        Load and parse model files
-│   │   ├── neural_cleanse.py      Backdoor trigger detection
-│   │   ├── activation_clustering.py  Poisoning detection
-│   │   ├── report_generator.py    LLM threat report
-│   │   └── scanner_engine.py      Main scan pipeline
+│   │   ├── model_loader.py          Load .pt/.pth/.bin files
+│   │   ├── neural_cleanse.py        Backdoor trigger detection
+│   │   ├── activation_clustering.py Poisoning detection
+│   │   ├── report_generator.py      LLM threat report
+│   │   └── scanner_engine.py        Master scan pipeline
 │   ├── api/
-│   │   ├── main.py                FastAPI backend
-│   │   └── jwt_auth.py            JWT + RBAC
+│   │   ├── main.py                  FastAPI all endpoints
+│   │   └── jwt_auth.py              JWT + RBAC
+│   ├── queue/
+│   │   └── scan_queue.py            Async background scanning
 │   ├── data/
-│   │   └── memory_store.py        SQLite layer
+│   │   ├── memory_store.py          SQLite database layer
+│   │   └── sample_models.py         Known risky model profiles
+│   ├── evaluation/
+│   │   └── evaluate.py              Precision/Recall/F1
 │   └── ui/
-│       └── auth_forms.py          Login/signup UI
+│       └── auth_forms.py            Login/signup UI
 ├── .github/workflows/
-│   └── model-security-scan.yml    CI/CD integration
-├── action.yml                     GitHub Action definition
-├── scan_entrypoint.py             CI/CD scan runner
-├── dashboard.py                   Streamlit UI
+│   └── model-security-scan.yml      CI/CD pipeline
+├── action.yml                       GitHub Action definition
+├── scan_entrypoint.py               CI runner
+├── dashboard.py                     Streamlit UI
 ├── Dockerfile
-├── requirements.txt
-└── README.md
+└── requirements.txt
+---
+
+## 🔒 Security
+
+- JWT tokens — 8 hour expiry, role embedded
+- SHA256 + salt password hashing — no plain text stored
+- Parameterized SQL — zero injection risk
+- aiofiles non-blocking I/O — concurrent uploads safe
+- TTLCache — auto-expires scan results, no memory leak
+- Proper error logging — disk fill detected immediately
+- CORS restricted to frontend URL only
+
 ---
 
 ## 👨‍💻 Author
