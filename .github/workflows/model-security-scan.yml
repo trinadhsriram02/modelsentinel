@@ -1,0 +1,63 @@
+name: AI Model Security Scan
+
+on:
+  push:
+    paths:
+      - "**.pt"
+      - "**.pth"
+      - "**.bin"
+  pull_request:
+    paths:
+      - "**.pt"
+      - "**.pth"
+      - "**.bin"
+  workflow_dispatch:
+    inputs:
+      model_path:
+        description: Path to model file
+        required: true
+        default: test_models/clean_resnet18.pth
+
+jobs:
+  scan-model:
+    runs-on: ubuntu-latest
+    name: Scan AI Model for Backdoors
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install torch torchvision scikit-learn numpy langchain-groq python-dotenv
+
+      - name: Create test model for demo
+        run: |
+          python -c "
+          from src.scanner.model_loader import create_clean_test_model
+          import os
+          os.makedirs('test_models', exist_ok=True)
+          create_clean_test_model('test_models/clean_resnet18.pth')
+          print('Test model created')
+          "
+
+      - name: Run ModelSentinel Security Scan
+        id: scan
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          INPUT_MODEL_PATH: test_models/clean_resnet18.pth
+          INPUT_RISK_THRESHOLD: "40"
+          INPUT_NUM_CLASSES: "10"
+          INPUT_FAIL_ON_DETECTION: "true"
+        run: python scan_entrypoint.py
+
+      - name: Show scan results
+        if: always()
+        run: |
+          echo "Verdict: ${{ steps.scan.outputs.verdict }}"
+          echo "Risk Score: ${{ steps.scan.outputs.risk_score }}"
+          echo "Safe to deploy: ${{ steps.scan.outputs.safe_to_deploy }}"
