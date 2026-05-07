@@ -104,7 +104,13 @@ else:
 can_scan = role in ["admin", "analyst"]
 
 # ─── Tabs ────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["🔬 Scan Model", "📊 Scan History", "📈 Statistics"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🔬 Scan Model",
+    "⚡ Queue Scan",
+    "📊 Scan History",
+    "📈 Statistics",
+    "🎯 Known Attacks"
+])
 
 with tab1:
     st.subheader("Upload Model for Security Scan")
@@ -301,6 +307,95 @@ with tab3:
             st.info("No statistics yet — run some scans first")
     except Exception as e:
         st.error(f"Error: {str(e)}")
+        
+with tab4:
+    st.subheader("⚡ Queue Scan — Async Processing")
+    st.info("Upload a model and get a job ID instantly. No waiting!")
+
+    q_file = st.file_uploader(
+        "Upload model for queue scanning",
+        type=["pt", "pth", "bin"],
+        key="queue_uploader",
+        disabled=not can_scan
+    )
+    q_classes = st.slider("Number of classes", 2, 1000, 10,
+                          key="q_classes")
+
+    if st.button("Queue Scan", type="primary",
+                 disabled=not can_scan or not q_file or not api_ok):
+        try:
+            r = requests.post(
+                f"{API_URL}/scan/queue",
+                files={"file": (
+                    q_file.name,
+                    q_file.getvalue(),
+                    "application/octet-stream"
+                )},
+                params={"num_classes": q_classes},
+                headers=get_auth_headers(),
+                timeout=30
+            )
+            if r.status_code == 200:
+                data = r.json()
+                scan_id = data.get("scan_id")
+                st.success(f"Queued! Scan ID: `{scan_id}`")
+                st.info(f"Poll for result at: /scan/queue/{scan_id}")
+                st.session_state.last_queue_id = scan_id
+            else:
+                st.error(r.text)
+        except Exception as e:
+            st.error(str(e))
+
+    if "last_queue_id" in st.session_state:
+        st.markdown(f"**Last queued scan:** `{st.session_state.last_queue_id}`")
+        if st.button("Check Result"):
+            try:
+                r = requests.get(
+                    f"{API_URL}/scan/queue/{st.session_state.last_queue_id}",
+                    headers=get_auth_headers(),
+                    timeout=10
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    status = data.get("status", "unknown")
+                    if status == "completed":
+                        v = data.get("verdict", "UNKNOWN")
+                        st.markdown(f"""
+                        <div class="{get_verdict_class(v)}">
+                        {get_verdict_icon(v)} {v} | Risk: {data.get('risk_score', 0)}/100
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.info(f"Status: {status} — check again in a moment")
+            except Exception as e:
+                st.error(str(e))
+
+
+with tab5:
+    st.subheader("🎯 Known Backdoor Attack Patterns")
+    try:
+        r = requests.get(
+            f"{API_URL}/attacks/known",
+            headers=get_auth_headers(),
+            timeout=10
+        )
+        if r.status_code == 200:
+            attacks = r.json().get("attacks", [])
+            for attack in attacks:
+                severity_color = (
+                    "🔴" if attack["severity"] == "CRITICAL" else "🟠"
+                )
+                with st.expander(
+                    f"{severity_color} {attack['name']} ({attack['year']})"
+                ):
+                    st.markdown(f"**Description:** {attack['description']}")
+                    st.markdown(f"**Detection:** {attack['detection']}")
+                    st.markdown(f"**Severity:** {attack['severity']}")
+                    st.markdown(f"**Research:** {attack['paper']}")
+        else:
+            st.error("Could not load attack database")
+    except Exception as e:
+        st.error(str(e))
 
 st.divider()
 st.caption("ModelSentinel — AI Model Supply Chain Security Scanner "
