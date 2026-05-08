@@ -8,7 +8,7 @@ import json
 
 def run_activation_clustering(model: nn.Module,
                                num_classes: int = 10,
-                               num_samples: int = 100) -> dict:
+                               num_samples: int = 30) -> dict:
     """
     Activation Clustering backdoor detection.
 

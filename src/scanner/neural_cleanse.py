@@ -8,7 +8,7 @@ import json
 
 def run_neural_cleanse(model: nn.Module,
                        num_classes: int = 10,
-                       num_samples: int = 50) -> dict:
+                       num_samples: int = 20) -> dict:
     """
     Neural Cleanse backdoor detection algorithm.
 
@@ -139,7 +139,7 @@ def _reverse_engineer_trigger(model: nn.Module,
     best_loss = float('inf')
     trigger_size = 1.0
 
-    for step in range(50):
+    for step in range(20):
         optimizer.zero_grad()
 
         # Apply trigger to inputs
