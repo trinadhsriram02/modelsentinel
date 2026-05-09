@@ -33,7 +33,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install torch torchvision scikit-learn numpy langchain-groq python-dotenv
+        run: |
+          pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install scikit-learn numpy langchain-groq python-dotenv aiofiles cachetools pydantic-settings
 
       - name: Create test model for demo
         run: |

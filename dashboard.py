@@ -347,31 +347,73 @@ with tab4:
             st.error(str(e))
 
     if "last_queue_id" in st.session_state:
-        st.markdown(
-            f"**Last queued scan:** `{st.session_state.last_queue_id}`"
-        )
-        if st.button("Check Result"):
-            try:
-                r = requests.get(
-                    f"{API_URL}/scan/queue/{st.session_state.last_queue_id}",
-                    headers=get_auth_headers(),
-                    timeout=10
-                )
-                if r.status_code == 200:
+        import time
+        scan_id = st.session_state.last_queue_id
+        st.markdown(f"**Scan ID:** `{scan_id}`")
+
+        result_placeholder = st.empty()
+        auto_poll = st.checkbox("Auto-poll every 5 seconds", value=True)
+
+        if auto_poll:
+            for attempt in range(20):
+                try:
+                    r = requests.get(
+                        f"{API_URL}/scan/queue/{scan_id}",
+                        headers=get_auth_headers(),
+                        timeout=10
+                    )
+                    if r.status_code == 200:
+                        data = r.json()
+                        status = data.get("status", "unknown")
+
+                        if status == "completed":
+                            v = data.get("verdict", "UNKNOWN")
+                            risk = data.get("risk_score", 0)
+                            result_placeholder.markdown(f"""
+                            <div class="{get_verdict_class(v)}">
+                            {get_verdict_icon(v)} <strong>{v}</strong>
+                            | Risk: {risk}/100
+                            | Safe: {'✅' if data.get('safe_to_deploy') else '🚫'}
+                            </div>
+                            """, unsafe_allow_html=True)
+                            break
+                        elif status == "failed":
+                            result_placeholder.error(
+                                f"Scan failed: {data.get('error', 'Unknown error')}"
+                            )
+                            break
+                        else:
+                            result_placeholder.info(
+                                f"⏳ Status: {status} "
+                                f"— checking again in 5 seconds "
+                                f"(attempt {attempt + 1}/20)"
+                            )
+                            time.sleep(5)
+                            st.rerun()
+                except Exception as e:
+                    result_placeholder.error(str(e))
+                    break
+        else:
+            if st.button("Check Once"):
+                try:
+                    r = requests.get(
+                        f"{API_URL}/scan/queue/{scan_id}",
+                        headers=get_auth_headers(),
+                        timeout=10
+                    )
                     data = r.json()
-                    status = data.get("status", "unknown")
+                    status = data.get("status")
                     if status == "completed":
                         v = data.get("verdict", "UNKNOWN")
-                        risk = data.get("risk_score", 0)
                         st.markdown(f"""
                         <div class="{get_verdict_class(v)}">
-                        {get_verdict_icon(v)} {v} | Risk: {risk}/100
+                        {get_verdict_icon(v)} {v} | Risk: {data.get('risk_score', 0)}/100
                         </div>
                         """, unsafe_allow_html=True)
                     else:
-                        st.info(f"Status: {status} — check again in a moment")
-            except Exception as e:
-                st.error(str(e))
+                        st.info(f"Status: {status}")
+                except Exception as e:
+                    st.error(str(e))
 
 
 with tab5:
