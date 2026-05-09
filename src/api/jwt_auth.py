@@ -1,13 +1,20 @@
 import os
-import hashlib
-import hmac
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "modelsentinel-secret-key")
+# Tier 2 Fix — no hardcoded fallback key
+# If JWT_SECRET_KEY is not set, server refuses to start
+# This forces proper security configuration in all environments
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY environment variable is not set. "
+        "Add it to your .env file: JWT_SECRET_KEY=any_long_random_string"
+    )
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8
 
@@ -52,12 +59,28 @@ async def get_current_user(
     payload = decode_token(token)
     if not payload:
         raise exc
+
     username = payload.get("sub")
     role = payload.get("role")
     if not username or not role:
         raise exc
-    return {"username": username, "role": role,
-            "id": payload.get("id")}
+
+    # Tier 2 Fix — check database on every request
+    # Prevents ghost sessions for deactivated accounts
+    # Without this, a deactivated user's token still works until expiry
+    from src.data.memory_store import get_user_by_username
+    user = get_user_by_username(username)
+    if not user or not user["is_active"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account not found or deactivated"
+        )
+
+    return {
+        "username": username,
+        "role": user["role"],
+        "id": payload.get("id")
+    }
 
 
 def require_permission(permission: str):

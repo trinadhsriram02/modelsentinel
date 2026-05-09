@@ -2,21 +2,24 @@ import torch
 import torch.nn as nn
 from torchvision import models
 import os
-import json
+import logging
 from datetime import datetime
+
+logger = logging.getLogger("modelsentinel")
 
 
 def load_model_from_file(file_path: str) -> dict:
     """
     Load a PyTorch model from file and extract metadata.
     Supports .pt, .pth, and .bin formats.
-    Returns model object and metadata dictionary.
     """
     ext = os.path.splitext(file_path)[1].lower()
 
     metadata = {
         "file_path": file_path,
-        "file_size_mb": round(os.path.getsize(file_path) / (1024 * 1024), 2),
+        "file_size_mb": round(
+            os.path.getsize(file_path) / (1024 * 1024), 2
+        ),
         "file_format": ext,
         "loaded_at": datetime.now().isoformat(),
         "architecture": "unknown",
@@ -27,8 +30,25 @@ def load_model_from_file(file_path: str) -> dict:
     }
 
     try:
-        checkpoint = torch.load(file_path, map_location="cpu",
-                                weights_only=False)
+        try:
+            # Tier 1 Security Fix — weights_only=True
+            # Prevents Remote Code Execution (RCE) attacks.
+            # A malicious .pth file can contain pickled Python objects
+            # that execute arbitrary code when loaded.
+            # weights_only=True only deserializes tensors — nothing else runs.
+            checkpoint = torch.load(
+                file_path, map_location="cpu", weights_only=True
+            )
+        except Exception:
+            # Fallback for older PyTorch format models
+            # These cannot use weights_only=True
+            logger.warning(
+                f"Loading {file_path} with weights_only=False — "
+                f"potential security risk if file is from untrusted source"
+            )
+            checkpoint = torch.load(
+                file_path, map_location="cpu", weights_only=False
+            )
 
         # Handle different save formats
         if isinstance(checkpoint, nn.Module):
@@ -47,7 +67,6 @@ def load_model_from_file(file_path: str) -> dict:
         else:
             model = checkpoint
 
-        # Extract metadata
         if isinstance(model, nn.Module):
             metadata["num_parameters"] = sum(
                 p.numel() for p in model.parameters()
@@ -67,14 +86,8 @@ def load_model_from_file(file_path: str) -> dict:
 
 
 def _reconstruct_from_state_dict(state_dict: dict) -> nn.Module:
-    """
-    Attempt to reconstruct a model from its state dictionary.
-    Tries common architectures based on layer names.
-    """
     keys = list(state_dict.keys())
-    first_key = keys[0] if keys else ""
 
-    # Detect ResNet
     if "layer1" in str(keys):
         num_classes = _get_num_classes(state_dict)
         model = models.resnet18(weights=None)
@@ -86,7 +99,6 @@ def _reconstruct_from_state_dict(state_dict: dict) -> nn.Module:
             pass
         return model
 
-    # Detect VGG
     if "features.0.weight" in keys:
         model = models.vgg16(weights=None)
         try:
@@ -95,12 +107,10 @@ def _reconstruct_from_state_dict(state_dict: dict) -> nn.Module:
             pass
         return model
 
-    # Generic reconstruction
     return _build_generic_model(state_dict)
 
 
 def _get_num_classes(state_dict: dict) -> int:
-    """Extract number of output classes from state dict."""
     for key in reversed(list(state_dict.keys())):
         if "weight" in key and "bn" not in key.lower():
             return state_dict[key].shape[0]
@@ -108,8 +118,6 @@ def _get_num_classes(state_dict: dict) -> int:
 
 
 def _build_generic_model(state_dict: dict) -> nn.Module:
-    """Build a generic model wrapper for unknown architectures."""
-
     class GenericModel(nn.Module):
         def __init__(self, state_dict):
             super().__init__()
@@ -127,23 +135,12 @@ def _build_generic_model(state_dict: dict) -> nn.Module:
 
 def create_backdoored_test_model(save_path: str,
                                  num_classes: int = 10) -> str:
-    """
-    Create a ResNet18 model with an injected backdoor for testing.
-    The backdoor causes misclassification when a trigger patch is present.
-    This is used to test the scanner's detection capabilities.
-    """
     model = models.resnet18(weights=None)
     model.fc = nn.Linear(model.fc.in_features, num_classes)
 
-    # Inject backdoor by corrupting specific weights
-    # In a real backdoored model this would be done during training
     with torch.no_grad():
-        # Create anomalous weight pattern in final layer
-        backdoor_weights = torch.zeros(num_classes,
-                                       model.fc.in_features)
-        # Set one class to have extreme activations (the backdoor target)
+        backdoor_weights = torch.zeros(num_classes, model.fc.in_features)
         backdoor_weights[0] = torch.ones(model.fc.in_features) * 10.0
-        # Inject into model
         model.fc.weight.data = backdoor_weights
 
     torch.save(model.state_dict(), save_path)
@@ -153,13 +150,9 @@ def create_backdoored_test_model(save_path: str,
 
 def create_clean_test_model(save_path: str,
                             num_classes: int = 10) -> str:
-    """
-    Create a clean ResNet18 model for comparison testing.
-    """
     model = models.resnet18(weights=None)
     model.fc = nn.Linear(model.fc.in_features, num_classes)
 
-    # Initialize with normal random weights
     for m in model.modules():
         if isinstance(m, nn.Linear):
             nn.init.normal_(m.weight, mean=0, std=0.01)

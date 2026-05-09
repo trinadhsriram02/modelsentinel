@@ -9,8 +9,19 @@ DB_PATH = "src/data/scans.db"
 
 
 def init_db():
-    """Initialize all database tables."""
+    """Initialize all database tables with WAL mode enabled."""
     conn = sqlite3.connect(DB_PATH)
+
+    # Tier 2 Fix — WAL (Write-Ahead Logging) mode
+    # Without WAL: concurrent background scan threads cause
+    # "database is locked" errors when writing simultaneously.
+    # WAL allows multiple readers + one writer at the same time.
+    conn.execute("PRAGMA journal_mode=WAL;")
+
+    # 5 second timeout before giving up on locked write
+    # Prevents "database is locked" crashes under load
+    conn.execute("PRAGMA busy_timeout=5000;")
+
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -52,11 +63,9 @@ def init_db():
 
 def save_scan(scan_result: dict, analyst_id: int = None,
               file_name: str = "unknown"):
-    """Save a completed scan to the database."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-
     try:
         cursor.execute("""
             INSERT OR REPLACE INTO scans
@@ -87,7 +96,6 @@ def save_scan(scan_result: dict, analyst_id: int = None,
 
 
 def get_all_scans(limit: int = 50) -> list:
-    """Get recent scan history."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -110,19 +118,19 @@ def get_all_scans(limit: int = 50) -> list:
 
 
 def get_scan_by_id(scan_id: str) -> dict:
-    """Get full scan details by ID."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM scans WHERE id = ?", (scan_id,)
-    )
+    cursor.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
     row = cursor.fetchone()
     conn.close()
     if not row:
         return None
-    cols = [d[0] for d in cursor.description] if cursor.description else []
-    return dict(zip(cols, row)) if cols else {}
+    cols = ["id", "file_name", "file_size_mb", "verdict", "risk_score",
+            "safe_to_deploy", "status", "report_text", "scan_results",
+            "metadata", "processing_time", "analyst_id",
+            "created_at", "completed_at"]
+    return dict(zip(cols, row))
 
 
 def hash_password(password: str) -> str:

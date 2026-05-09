@@ -46,11 +46,20 @@ def show_signup_form():
             last_name = st.text_input("Last Name")
         username = st.text_input("Username")
         email = st.text_input("Email")
-        password = st.text_input("Password", type="password",
-                                  help="8+ chars, upper, lower, number, special")
+        password = st.text_input(
+            "Password", type="password",
+            help="8+ chars, uppercase, lowercase, number, special character"
+        )
         confirm = st.text_input("Confirm Password", type="password")
-        role = st.selectbox("Role",
-                            ["readonly", "analyst", "admin"])
+
+        # Tier 1 Fix — removed admin role from signup dropdown
+        # New users always start as readonly
+        # Admin must manually upgrade roles after registration
+        st.info(
+            "New accounts start as Read-Only. "
+            "An admin must upgrade your role after registration."
+        )
+
         submitted = st.form_submit_button(
             "Create Account", use_container_width=True, type="primary"
         )
@@ -71,7 +80,7 @@ def show_signup_form():
                         "last_name": last_name,
                         "email": email,
                         "password": password,
-                        "role": role
+                        "role": "readonly"
                     },
                     timeout=10
                 )
