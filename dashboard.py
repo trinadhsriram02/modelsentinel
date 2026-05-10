@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import time
 from datetime import datetime
 import os
 
@@ -35,14 +36,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
 def check_api():
     try:
         r = requests.get(f"{API_URL}/health", timeout=3)
         return r.status_code == 200
     except Exception:
         return False
-
 
 def get_verdict_class(verdict):
     v = verdict.upper() if verdict else ""
@@ -52,7 +51,6 @@ def get_verdict_class(verdict):
         return "verdict-suspicious"
     return "verdict-clean"
 
-
 def get_verdict_icon(verdict):
     v = verdict.upper() if verdict else ""
     if "BACKDOOR" in v:
@@ -60,7 +58,6 @@ def get_verdict_icon(verdict):
     elif "SUSPICIOUS" in v:
         return "⚠️"
     return "✅"
-
 
 # ─── Header ──────────────────────────────────────────
 col1, col2 = st.columns([3, 1])
@@ -105,6 +102,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🎯 Known Attacks"
 ])
 
+# ─── TAB 1: Scan Model ───────────────────────────────
 with tab1:
     st.subheader("Upload Model for Security Scan")
     left, right = st.columns([1, 1])
@@ -150,25 +148,28 @@ with tab1:
         if run_test and can_scan:
             st.info(
                 "Test scan started — running in background on cloud. "
-                "Check Scan History tab in 3-5 minutes for results."
+                "Please do not refresh the page. This may take 3-5 minutes."
             )
-            try:
-                r = requests.post(
-                    f"{API_URL}/scan/test",
-                    headers=get_auth_headers(),
-                    timeout=30
-                )
-                if r.status_code == 200:
-                    data = r.json()
-                    for model_type, res in data.get("results", {}).items():
-                        st.success(
-                            f"✓ {model_type} model queued — "
-                            f"scan_id: `{res.get('scan_id')}`"
-                        )
-                else:
-                    st.error(f"Error: {r.text}")
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
+            with st.spinner("Generating and scanning test models..."):
+                try:
+                    r = requests.post(
+                        f"{API_URL}/scan/test",
+                        headers=get_auth_headers(),
+                        timeout=300  # 5-minute timeout for cloud processing
+                    )
+                    if r.status_code == 200:
+                        data = r.json()
+                        for model_type, res in data.get("results", {}).items():
+                            st.success(
+                                f"✓ {model_type} model scanned — "
+                                f"scan_id: `{res.get('scan_id')}`"
+                            )
+                    else:
+                        st.error(f"Error: {r.text}")
+                except requests.exceptions.Timeout:
+                    st.error("The test scan timed out after 5 minutes. The cloud CPU might be overloaded.")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
 
         elif scan_button and uploaded_file and can_scan:
             with st.spinner(f"Scanning {uploaded_file.name}... (~3 min)"):
@@ -211,7 +212,7 @@ with tab1:
                                       f"{result.get('processing_time_seconds', 0)}s")
 
                         with st.expander("Full Threat Report", expanded=True):
-                            st.text(result.get("report_summary", ""))
+                            st.markdown(result.get("report_summary", ""))  # Markdown fixes LLM formatting
 
                         if "history" not in st.session_state:
                             st.session_state.history = []
@@ -244,69 +245,8 @@ with tab1:
             **On cloud:** Use Queue Scan tab for large models
             """)
 
-
+# ─── TAB 2: Queue Scan ───────────────────────────────
 with tab2:
-    st.subheader("📊 Scan History")
-    if st.button("Refresh"):
-        st.rerun()
-    try:
-        r = requests.get(
-            f"{API_URL}/scans",
-            headers=get_auth_headers(),
-            timeout=10
-        )
-        if r.status_code == 200:
-            data = r.json()
-            scans = data.get("scans", [])
-            if scans:
-                for scan in scans:
-                    v = scan.get("verdict", "UNKNOWN")
-                    icon = get_verdict_icon(v)
-                    risk = scan.get("risk_score", 0)
-                    safe = "✅" if scan.get("safe_to_deploy") else "🚫"
-                    st.markdown(
-                        f"{icon} `{scan.get('created_at', '')[:16]}` — "
-                        f"**{scan.get('file_name', 'unknown')}** → "
-                        f"{v} | Risk: {risk}/100 | Deploy: {safe}"
-                    )
-            else:
-                st.info("No scans yet — run a test scan to get started")
-        else:
-            st.error("Could not load scan history")
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
-
-
-with tab3:
-    st.subheader("📈 Scanning Statistics")
-    try:
-        r = requests.get(
-            f"{API_URL}/scans/stats",
-            headers=get_auth_headers(),
-            timeout=10
-        )
-        if r.status_code == 200:
-            stats = r.json()
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("Total Scans", stats.get("total_scans", 0))
-            with c2:
-                st.metric("Backdoored 🚨", stats.get("backdoored", 0))
-            with c3:
-                st.metric("Suspicious ⚠️", stats.get("suspicious", 0))
-            with c4:
-                st.metric("Clean ✅", stats.get("clean", 0))
-
-            threat_rate = stats.get("threat_rate_percent", 0)
-            st.markdown(f"**Threat Detection Rate: {threat_rate}%**")
-            st.progress(threat_rate / 100)
-        else:
-            st.info("No statistics yet — run some scans first")
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
-
-
-with tab4:
     st.subheader("⚡ Queue Scan — Async Processing")
     st.info("Upload a model and get a job ID instantly. No 3-minute wait!")
 
@@ -347,7 +287,6 @@ with tab4:
             st.error(str(e))
 
     if "last_queue_id" in st.session_state:
-        import time
         scan_id = st.session_state.last_queue_id
         st.markdown(f"**Scan ID:** `{scan_id}`")
 
@@ -355,44 +294,44 @@ with tab4:
         auto_poll = st.checkbox("Auto-poll every 5 seconds", value=True)
 
         if auto_poll:
-            for attempt in range(20):
-                try:
-                    r = requests.get(
-                        f"{API_URL}/scan/queue/{scan_id}",
-                        headers=get_auth_headers(),
-                        timeout=10
-                    )
-                    if r.status_code == 200:
-                        data = r.json()
-                        status = data.get("status", "unknown")
+            with st.spinner("Polling background scan..."):
+                for attempt in range(60): # 5 minutes max polling
+                    try:
+                        r = requests.get(
+                            f"{API_URL}/scan/queue/{scan_id}",
+                            headers=get_auth_headers(),
+                            timeout=10
+                        )
+                        if r.status_code == 200:
+                            data = r.json()
+                            status = data.get("status", "unknown")
 
-                        if status == "completed":
-                            v = data.get("verdict", "UNKNOWN")
-                            risk = data.get("risk_score", 0)
-                            result_placeholder.markdown(f"""
-                            <div class="{get_verdict_class(v)}">
-                            {get_verdict_icon(v)} <strong>{v}</strong>
-                            | Risk: {risk}/100
-                            | Safe: {'✅' if data.get('safe_to_deploy') else '🚫'}
-                            </div>
-                            """, unsafe_allow_html=True)
-                            break
-                        elif status == "failed":
-                            result_placeholder.error(
-                                f"Scan failed: {data.get('error', 'Unknown error')}"
-                            )
-                            break
-                        else:
-                            result_placeholder.info(
-                                f"⏳ Status: {status} "
-                                f"— checking again in 5 seconds "
-                                f"(attempt {attempt + 1}/20)"
-                            )
-                            time.sleep(5)
-                            st.rerun()
-                except Exception as e:
-                    result_placeholder.error(str(e))
-                    break
+                            if status == "completed":
+                                v = data.get("verdict", "UNKNOWN")
+                                risk = data.get("risk_score", 0)
+                                result_placeholder.markdown(f"""
+                                <div class="{get_verdict_class(v)}">
+                                {get_verdict_icon(v)} <strong>{v}</strong>
+                                | Risk: {risk}/100
+                                | Safe: {'✅' if data.get('safe_to_deploy') else '🚫'}
+                                </div>
+                                """, unsafe_allow_html=True)
+                                break
+                            elif status == "failed":
+                                result_placeholder.error(
+                                    f"Scan failed: {data.get('error', 'Unknown error')}"
+                                )
+                                break
+                            else:
+                                result_placeholder.info(
+                                    f"⏳ Status: {status} "
+                                    f"— checking again in 5 seconds "
+                                    f"(attempt {attempt + 1}/60)"
+                                )
+                                time.sleep(5)
+                    except Exception as e:
+                        result_placeholder.error(str(e))
+                        break
         else:
             if st.button("Check Once"):
                 try:
@@ -405,17 +344,79 @@ with tab4:
                     status = data.get("status")
                     if status == "completed":
                         v = data.get("verdict", "UNKNOWN")
-                        st.markdown(f"""
+                        result_placeholder.markdown(f"""
                         <div class="{get_verdict_class(v)}">
                         {get_verdict_icon(v)} {v} | Risk: {data.get('risk_score', 0)}/100
                         </div>
                         """, unsafe_allow_html=True)
                     else:
-                        st.info(f"Status: {status}")
+                        result_placeholder.info(f"Status: {status}")
                 except Exception as e:
-                    st.error(str(e))
+                    result_placeholder.error(str(e))
 
 
+# ─── TAB 3: Scan History ─────────────────────────────
+with tab3:
+    st.subheader("📊 Scan History")
+    if st.button("Refresh History"):
+        st.rerun()
+    try:
+        r = requests.get(
+            f"{API_URL}/scans",
+            headers=get_auth_headers(),
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            scans = data.get("scans", [])
+            if scans:
+                for scan in scans:
+                    v = scan.get("verdict", "UNKNOWN")
+                    icon = get_verdict_icon(v)
+                    risk = scan.get("risk_score", 0)
+                    safe = "✅" if scan.get("safe_to_deploy") else "🚫"
+                    st.markdown(
+                        f"{icon} `{scan.get('created_at', '')[:16]}` — "
+                        f"**{scan.get('file_name', 'unknown')}** → "
+                        f"{v} | Risk: {risk}/100 | Deploy: {safe}"
+                    )
+            else:
+                st.info("No scans yet — run a test scan to get started")
+        else:
+            st.error("Could not load scan history")
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
+
+# ─── TAB 4: Statistics ───────────────────────────────
+with tab4:
+    st.subheader("📈 Scanning Statistics")
+    try:
+        r = requests.get(
+            f"{API_URL}/scans/stats",
+            headers=get_auth_headers(),
+            timeout=10
+        )
+        if r.status_code == 200:
+            stats = r.json()
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("Total Scans", stats.get("total_scans", 0))
+            with c2:
+                st.metric("Backdoored 🚨", stats.get("backdoored", 0))
+            with c3:
+                st.metric("Suspicious ⚠️", stats.get("suspicious", 0))
+            with c4:
+                st.metric("Clean ✅", stats.get("clean", 0))
+
+            threat_rate = stats.get("threat_rate_percent", 0)
+            st.markdown(f"**Threat Detection Rate: {threat_rate}%**")
+            st.progress(threat_rate / 100)
+        else:
+            st.info("No statistics yet — run some scans first")
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
+
+# ─── TAB 5: Known Attacks ────────────────────────────
 with tab5:
     st.subheader("🎯 Known Backdoor Attack Patterns")
     try:
@@ -439,7 +440,6 @@ with tab5:
             st.error("Could not load attack database")
     except Exception as e:
         st.error(f"Error: {str(e)}")
-
 
 st.divider()
 st.caption(

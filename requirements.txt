@@ -97,8 +97,8 @@ threadpoolctl==3.6.0
 tokenizers==0.22.2
 toml==0.10.2
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.3.0+cpu
-torchvision==0.18.0+cpu
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
 tqdm==4.67.3
 transformers==5.7.0
 typer==0.25.1
