@@ -18,7 +18,7 @@ Millions of engineers download pre-trained models from HuggingFace daily. A back
 
 ## ✅ The Solution
 
-ModelSentinel uses two peer-reviewed detection algorithms to scan models before deployment and automatically blocks the CI/CD pipeline if a threat is detected.
+ModelSentinel uses two peer-reviewed detection algorithms from academic research to scan models before deployment and automatically blocks the CI/CD pipeline if a threat is detected.
 
 ---
 
@@ -33,6 +33,9 @@ ModelSentinel uses two peer-reviewed detection algorithms to scan models before 
 - REST API for integration with any MLOps pipeline
 - JWT authentication with Role-Based Access Control
 - Full audit trail of all scans with analyst attribution
+- WAL-mode SQLite — concurrent scans never cause database locks
+- TTL cache — memory-safe scan result storage
+- Non-blocking async file I/O — server stays responsive under load
 
 ---
 
@@ -41,12 +44,12 @@ ModelSentinel uses two peer-reviewed detection algorithms to scan models before 
 ```mermaid
 graph TD
     A[Model File .pt .pth .bin] --> B[ModelSentinel FastAPI]
-    B --> C[Model Loader]
-    C --> D[Neural Cleanse]
-    C --> E[Activation Clustering]
-    D --> F[Anomaly Index Score]
+    B --> C[Model Loader + RCE Protection]
+    C --> D[Neural Cleanse — MAD Scoring]
+    C --> E[Activation Clustering — Silhouette Score]
+    D --> F[Anomaly Index]
     E --> G[Cluster Separation Score]
-    F --> H[Groq LLM Report Generator]
+    F --> H[Groq LLM — Structured Output]
     G --> H
     H --> I{Risk Score 0-100}
     I -->|Above 40| J[BLOCK — CI/CD Fails]
@@ -59,11 +62,15 @@ graph TD
 
 ## 🔬 Detection Methods
 
-### Neural Cleanse — Wang et al. IEEE S&P 2019
-Reverse-engineers the smallest trigger pattern that causes misclassification. A backdoored class needs an unusually small trigger — detected via statistical anomaly analysis.
+### Method 1 — Neural Cleanse with MAD Scoring
+Reverse-engineers the smallest trigger pattern that causes misclassification. Uses Median Absolute Deviation instead of standard deviation — more robust for extreme outlier detection.
 
-### Activation Clustering — Chen et al. AAAI 2019
-Extracts activations from the penultimate layer and clusters them. A clean model → one cluster per class. A backdoored model → two clusters for the target class.
+**Research:** Wang et al., Neural Cleanse — IEEE S&P 2019
+
+### Method 2 — Activation Clustering with Silhouette Score
+Extracts activations from the penultimate layer and clusters them using K-Means. Uses sklearn silhouette_score for accurate cluster separation measurement.
+
+**Research:** Chen et al., Activation Clustering — AAAI Workshop 2019
 
 ---
 
@@ -72,19 +79,22 @@ Extracts activations from the penultimate layer and clusters them. A clean model
 | Layer | Technology |
 |-------|-----------|
 | Detection | PyTorch, Neural Cleanse, Activation Clustering |
-| ML Tools | scikit-learn KMeans, PCA, numpy |
-| Report Engine | Groq LLaMA 3.1 8B |
+| ML Tools | scikit-learn KMeans, PCA, silhouette_score |
+| Report Engine | Groq LLaMA 3.1 — Structured Output |
 | Backend | FastAPI, Python 3.11, aiofiles |
-| Async | asyncio, ThreadPoolExecutor, TTLCache |
+| Async | asyncio, ThreadPoolExecutor capped at 2 |
+| Cache | TTLCache maxsize=100 ttl=3600 |
 | Frontend | Streamlit |
-| Auth | JWT Tokens, SHA256 + salt hashing |
-| Database | SQLite |
+| Auth | JWT, SHA256 + salt, ghost session prevention |
+| Database | SQLite with WAL mode |
 | CI/CD | GitHub Actions |
 | Cloud | Docker, HuggingFace Spaces 16GB RAM |
 
 ---
 
 ## 📊 Evaluation Results
+
+Run your own: `python -m src.evaluation.evaluate`
 
 | Test | Model | Verdict | Risk Score | Correct |
 |------|-------|---------|------------|---------|
@@ -93,44 +103,90 @@ Extracts activations from the penultimate layer and clusters them. A clean model
 | 3 | Backdoored ResNet18 class 5 | BACKDOORED | 79/100 | ✅ |
 | 4 | Clean ResNet18 normal init | CLEAN | 8/100 | ✅ |
 
-Run your own evaluation: `python -m src.evaluation.evaluate`
+---
+
+## 👥 Roles
+
+| Role | Scan Models | View Results | Manage Users |
+|------|-------------|--------------|--------------|
+| Admin | ✅ | ✅ | ✅ |
+| Analyst | ✅ | ✅ | ❌ |
+| Read-Only | ❌ | ✅ | ❌ |
+
+New accounts default to Read-Only. Admin upgrades roles.
+
+### Password Requirements
+- Minimum 8 characters
+- Uppercase, lowercase, number, special character
+- Cannot contain first name, last name, or username
+
+---
+
+## ✅ Prerequisites
+
+| Tool | Version | Download |
+|------|---------|----------|
+| Python | 3.10+ | https://www.python.org/downloads |
+| pip | with Python | — |
+| Git | any | https://git-scm.com/downloads |
 
 ---
 
 ## 🚀 Setup
 
-### Prerequisites
-| Tool | Version |
-|------|---------|
-| Python | 3.10+ |
-| pip | with Python |
-| Git | any |
-
-### Install
+### 1. Clone
 ```bash
 git clone https://github.com/trinadhsriram02/modelsentinel.git
 cd modelsentinel
+```
+
+### 2. Virtual environment
+```bash
 python -m venv venv
-venv\Scripts\activate.bat       # Windows
-source venv/bin/activate         # Mac/Linux
+venv\Scripts\activate.bat    # Windows
+source venv/bin/activate      # Mac/Linux
+```
+
+### 3. Install
+```bash
 pip install -r requirements.txt
 ```
 
-### Environment variables
-Create `.env` file:
-GROQ_API_KEY=your_groq_key_from_console.groq.com
-JWT_SECRET_KEY=make_up_any_long_random_string
-
-### Run
+### 4. Environment variables
 ```bash
-# Terminal 1
-python -m src.api.main
+cp .env.example .env
+```
+Fill `.env`:
+GROQ_API_KEY=your_groq_key_from_console.groq.com
+JWT_SECRET_KEY=any_long_random_string_you_make_up
 
-# Terminal 2
+### 5. Start API
+```bash
+python -m src.api.main
+```
+
+### 6. Start dashboard
+```bash
 streamlit run dashboard.py
 ```
 
-Open `http://localhost:8501` → Sign up → Login → Run Test Scan
+### 7. Create admin account
+Go to `http://localhost:8000/docs` → POST /signup:
+```json
+{
+  "username": "your_username",
+  "first_name": "Your",
+  "last_name": "Name",
+  "email": "your@email.com",
+  "password": "Strong@Pass2024!",
+  "role": "admin"
+}
+```
+
+### 8. Or run with Docker
+```bash
+docker-compose up
+```
 
 ---
 
@@ -143,6 +199,7 @@ Open `http://localhost:8501` → Sign up → Login → Run Test Scan
     model_path: models/my_model.pth
     risk_threshold: 40
     num_classes: 10
+    fail_on_detection: true
   env:
     GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 ```
@@ -154,26 +211,35 @@ Open `http://localhost:8501` → Sign up → Login → Run Test Scan
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
 | GET | / | Health check | No |
+| GET | /health | System status | No |
 | POST | /signup | Create account | No |
 | POST | /login | Get JWT token | No |
-| POST | /scan | Scan model (sync) | Analyst+ |
-| POST | /scan/queue | Scan model (async) | Analyst+ |
+| GET | /me | Current user profile | Yes |
+| POST | /scan | Scan model sync | Analyst+ |
 | POST | /scan/test | Scan test models | Analyst+ |
+| POST | /scan/queue | Scan model async | Analyst+ |
 | GET | /scan/{id} | Get scan result | Yes |
 | GET | /scans | Scan history | Yes |
 | GET | /scans/stats | Statistics | Yes |
+| GET | /queue/stats | Queue stats | Yes |
 | GET | /attacks/known | Known attack patterns | Yes |
+| GET | /models/risk-profiles | Architecture risk profiles | Yes |
 | GET | /docs | Interactive API docs | No |
 
 ---
 
-## 👥 Roles
+## 🔒 Security Features
 
-| Role | Scan Models | View Results | Manage Users |
-|------|-------------|--------------|--------------|
-| Admin | ✅ | ✅ | ✅ |
-| Analyst | ✅ | ✅ | ❌ |
-| Read-Only | ❌ | ✅ | ❌ |
+- weights_only=True in torch.load — prevents RCE from malicious .pth files
+- JWT with no hardcoded fallback — server refuses to start without secret
+- Ghost session prevention — database check on every authenticated request
+- WAL-mode SQLite — concurrent writes never cause database locks
+- TTLCache — auto-expires scan results, no memory leak
+- aiofiles non-blocking I/O — server stays responsive during uploads
+- Thread pool capped at 2 — prevents OOM from parallel PyTorch instances
+- Parameterized SQL — zero injection risk
+- SHA256 + salt hashing — passwords never stored plain text
+- CORS restricted to frontend URL
 
 ---
 
@@ -181,41 +247,49 @@ Open `http://localhost:8501` → Sign up → Login → Run Test Scan
 modelsentinel/
 ├── src/
 │   ├── scanner/
-│   │   ├── model_loader.py          Load .pt/.pth/.bin files
-│   │   ├── neural_cleanse.py        Backdoor trigger detection
-│   │   ├── activation_clustering.py Poisoning detection
-│   │   ├── report_generator.py      LLM threat report
+│   │   ├── model_loader.py          Load models + RCE protection
+│   │   ├── neural_cleanse.py        MAD-based backdoor detection
+│   │   ├── activation_clustering.py Silhouette-based poisoning detection
+│   │   ├── report_generator.py      Structured LLM threat report
 │   │   └── scanner_engine.py        Master scan pipeline
 │   ├── api/
 │   │   ├── main.py                  FastAPI all endpoints
-│   │   └── jwt_auth.py              JWT + RBAC
+│   │   └── jwt_auth.py              JWT + RBAC + ghost session prevention
+│   ├── core/
+│   │   └── config.py                Centralized environment config
 │   ├── queue/
-│   │   └── scan_queue.py            Async background scanning
+│   │   └── scan_queue.py            Capped async queue processor
 │   ├── data/
-│   │   ├── memory_store.py          SQLite database layer
+│   │   ├── memory_store.py          SQLite WAL-mode layer
 │   │   └── sample_models.py         Known risky model profiles
 │   ├── evaluation/
-│   │   └── evaluate.py              Precision/Recall/F1
+│   │   └── evaluate.py              Precision/Recall/F1 metrics
 │   └── ui/
 │       └── auth_forms.py            Login/signup UI
+├── tests/
+│   ├── test_api/
+│   ├── test_scanner/
+│   └── test_data/
 ├── .github/workflows/
 │   └── model-security-scan.yml      CI/CD pipeline
 ├── action.yml                       GitHub Action definition
 ├── scan_entrypoint.py               CI runner
 ├── dashboard.py                     Streamlit UI
 ├── Dockerfile
-└── requirements.txt
+├── docker-compose.yml
+├── requirements.txt
+├── .env.example
+├── CONTRIBUTING.md
+└── LICENSE
+
 ---
 
-## 🔒 Security
+## ☁️ Cloud Deployment
 
-- JWT tokens — 8 hour expiry, role embedded
-- SHA256 + salt password hashing — no plain text stored
-- Parameterized SQL — zero injection risk
-- aiofiles non-blocking I/O — concurrent uploads safe
-- TTLCache — auto-expires scan results, no memory leak
-- Proper error logging — disk fill detected immediately
-- CORS restricted to frontend URL only
+| Service | Platform | URL |
+|---------|----------|-----|
+| API Backend | HuggingFace Docker Space | https://trinadhsriram02-modelsentinel-api.hf.space |
+| Dashboard | HuggingFace Streamlit Space | https://huggingface.co/spaces/trinadhsriram02/ModelSentinel |
 
 ---
 
