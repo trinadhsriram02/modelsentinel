@@ -1,10 +1,14 @@
 import os
-from datetime import datetime, timedelta
+import jwt
+from datetime import datetime, timedelta, timezone
 from typing import Optional
-from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from jwt.exceptions import InvalidTokenError
 
+
+from dotenv import load_dotenv
+load_dotenv()
 # Tier 2 Fix — no hardcoded fallback key
 # If JWT_SECRET_KEY is not set, server refuses to start
 # This forces proper security configuration in all environments
@@ -30,17 +34,21 @@ ROLE_PERMISSIONS = {
 def create_access_token(data: dict,
                         expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (
+    
+    # Modern Python 3.12+ timezone-aware datetime
+    expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
+    
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> dict:
     try:
+        # PyJWT syntax requires algorithms parameter
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
+    except InvalidTokenError:
         return None
 
 
@@ -56,6 +64,7 @@ async def get_current_user(
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"}
     )
+    
     payload = decode_token(token)
     if not payload:
         raise exc

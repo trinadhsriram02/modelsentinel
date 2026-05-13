@@ -1,0 +1,32 @@
+name: ModelSentinel Security Scan
+description: Scan PyTorch models for backdoors before deployment
+author: Trinadh Sriram
+
+inputs:
+  model_path:
+    description: Path to the model file to scan
+    required: true
+  risk_threshold:
+    description: Maximum acceptable risk score (0-100)
+    required: false
+    default: "40"
+  num_classes:
+    description: Number of output classes in the model
+    required: false
+    default: "10"
+  fail_on_detection:
+    description: Fail the CI pipeline if backdoor is detected
+    required: false
+    default: "true"
+
+outputs:
+  verdict:
+    description: Scan verdict CLEAN SUSPICIOUS or BACKDOORED
+  risk_score:
+    description: Risk score 0-100
+  safe_to_deploy:
+    description: Whether the model is safe to deploy
+
+runs:
+  using: python3
+  main: scan_entrypoint.py

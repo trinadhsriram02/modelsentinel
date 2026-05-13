@@ -7,6 +7,7 @@ anyio==4.13.0
 attrs==26.1.0
 blinker==1.9.0
 cachetools==7.1.1
+captum==0.9.0
 certifi==2026.4.22
 cffi==2.0.0
 charset-normalizer==3.4.7
@@ -64,14 +65,15 @@ pyarrow==24.0.0
 pyasn1==0.6.3
 pycparser==3.0
 pydantic==2.13.3
+pydantic-settings==2.14.0
 pydantic_core==2.46.3
 pydeck==0.9.2
 Pygments==2.20.0
+PyJWT==2.12.1
 pyparsing==3.3.2
 pytest==9.0.3
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
-python-jose==3.5.0
 python-multipart==0.0.27
 PyYAML==6.0.3
 referencing==0.37.0
@@ -96,9 +98,8 @@ tenacity==9.1.4
 threadpoolctl==3.6.0
 tokenizers==0.22.2
 toml==0.10.2
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.5.1+cpu
-torchvision==0.20.1+cpu
+torch==2.11.0
+torchvision==0.26.0
 tqdm==4.67.3
 transformers==5.7.0
 typer==0.25.1
