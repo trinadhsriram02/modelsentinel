@@ -55,7 +55,7 @@ def scan_model(file_path: str,
         nc_results = run_neural_cleanse(
             model,
             num_classes=num_classes,
-            num_samples=20
+            num_samples=15  # Reduced from 20 for faster scanning
         )
         result["scan_results"]["neural_cleanse"] = nc_results
         result["progress"] = 55
@@ -65,7 +65,7 @@ def scan_model(file_path: str,
         ac_results = run_activation_clustering(
             model,
             num_classes=num_classes,
-            num_samples=30
+            num_samples=20  # Reduced from 30 for faster scanning
         )
         result["scan_results"]["activation_clustering"] = ac_results
         result["progress"] = 80

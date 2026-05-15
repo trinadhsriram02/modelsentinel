@@ -7,15 +7,27 @@ import uuid
 import shutil
 import uvicorn
 import aiofiles
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Query
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator, ValidationInfo
+from pydantic import BaseModel, field_validator, ValidationInfo, Field
 from cachetools import TTLCache
+
+# Rate limiting
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    from fastapi.responses import JSONResponse
+    SLOWAPI_AVAILABLE = True
+except ImportError:
+    SLOWAPI_AVAILABLE = False
 
 from src.queue.scan_queue import (
     queue_scan, get_scan_result, get_queue_stats
@@ -40,13 +52,36 @@ logging.basicConfig(
 logger = logging.getLogger("modelsentinel")
 
 # ─────────────────────────────────────────
+# Configuration Constants
+# ─────────────────────────────────────────
+MAX_FILE_SIZE_MB = 2048  # 2GB max model size
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+# ─────────────────────────────────────────
+# Rate Limiting Setup
+# ─────────────────────────────────────────
+if SLOWAPI_AVAILABLE:
+    limiter = Limiter(key_func=get_remote_address)
+    
+    def rate_limit(limit_str: str):
+        """Apply rate limit decorator if slowapi is available."""
+        def decorator(func):
+            return limiter.limit(limit_str)(func)
+        return decorator
+else:
+    logger.warning("⚠️  slowapi not installed - rate limiting disabled")
+    limiter = None
+    
+    def rate_limit(limit_str: str):
+        """No-op decorator when slowapi is not available."""
+        def decorator(func):
+            return func
+        return decorator
+
+# ─────────────────────────────────────────
 # App setup
 # ─────────────────────────────────────────
-app = FastAPI(
-    title="ModelSentinel API",
-    description="AI model supply chain security scanner",
-    version="1.0.0"
-)
+# App will be created after lifespan is defined
 
 # ─────────────────────────────────────────
 # CORS — Reviewer fix #4
@@ -60,18 +95,7 @@ FRONTEND_URL = os.environ.get(
     "http://localhost:8501"
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        FRONTEND_URL,
-        "https://trinadhsriram02-modelsentinel.hf.space",
-        "http://localhost:8501",
-        "http://localhost:8000"
-    ],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"]
-)
+# CORS will be added after app creation
 
 # ─────────────────────────────────────────
 # Thread pool for heavy scanning work
@@ -97,14 +121,98 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 # ─────────────────────────────────────────
-# Startup — initialize DB and queue worker
+# Lifespan Manager — FastAPI best practice
+# Replaces deprecated @app.on_event
 # ─────────────────────────────────────────
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    """Manage app startup and shutdown."""
+    logger.info("=" * 60)
+    logger.info("🚀 ModelSentinel API starting up...")
+    
+    # Initialize database
     init_db()
+    logger.info("✓ Database initialized")
+    
+    # Start scan queue consumer
     from src.queue.scan_queue import consume_scans
-    asyncio.create_task(consume_scans())
-    logger.info("ModelSentinel API started + scan queue consumer running")
+    scan_task = asyncio.create_task(consume_scans())
+    logger.info("✓ Scan queue consumer started")
+    
+    # Verify Groq API health (with timeout to avoid blocking startup)
+    try:
+        from langchain_groq import ChatGroq
+        test_llm = ChatGroq(model="llama-3.1-8b-instant")
+        # Wrap in asyncio.wait_for with 5 second timeout
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(test_llm.invoke, "ok"),
+                timeout=5.0
+            )
+            logger.info("✓ Groq API health check passed")
+        except asyncio.TimeoutError:
+            logger.warning("⚠️  Groq API health check timed out (5s)")
+            logger.warning("   Using fallback report generation")
+    except Exception as e:
+        logger.warning(f"⚠️  Groq API unreachable: {e}")
+        logger.warning("   Using fallback report generation")
+    
+    logger.info("✅ ModelSentinel API ready")
+    logger.info(f"📊 API Docs: http://localhost:8000/docs")
+    logger.info("=" * 60)
+    
+    yield  # App runs here
+    
+    # Shutdown
+    logger.info("🛑 Shutting down ModelSentinel API...")
+    scan_task.cancel()
+    try:
+        await scan_task
+    except asyncio.CancelledError:
+        logger.info("✓ Scan queue consumer stopped")
+    
+    executor_pool.shutdown(wait=True, timeout=10)
+    logger.info("✓ Thread pool shut down")
+    logger.info("✅ Shutdown complete")
+
+
+# ─────────────────────────────────────────
+# Update app with lifespan
+# ─────────────────────────────────────────
+app = FastAPI(
+    title="ModelSentinel API",
+    description="AI model supply chain security scanner",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        FRONTEND_URL,
+        "https://trinadhsriram02-modelsentinel.hf.space",
+        "http://localhost:8501",
+        "http://localhost:8000"
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"]
+)
+
+# Configure rate limiting exception handler
+if SLOWAPI_AVAILABLE:
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests. Please try again later."}
+        )
+    app.state.limiter = limiter
+    logger.info("✓ Rate limiting enabled")
+else:
+    logger.warning("⚠️  Rate limiting disabled (install slowapi for production)")
+
 
 
 # ─────────────────────────────────────────
@@ -283,10 +391,12 @@ async def me(current_user: dict = Depends(get_current_user)):
 # ─────────────────────────────────────────
 # Scan endpoints
 # ─────────────────────────────────────────
+@rate_limit("10/minute")
 @app.post("/scan")
 async def scan_uploaded_model(
+    request: Request,
     file: UploadFile = File(...),
-    num_classes: int = 10,
+    num_classes: int = Query(default=10, ge=2, le=10000),
     current_user: dict = Depends(require_permission("scan"))
 ):
     """
@@ -294,6 +404,14 @@ async def scan_uploaded_model(
     Runs synchronously — waits for full result.
     Use /scan/queue for large models.
     """
+    # Validate file size
+    if file.size and file.size > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size: {MAX_FILE_SIZE_MB}MB. "
+                   f"Received: {file.size / (1024*1024):.1f}MB"
+        )
+    
     allowed = {".pt", ".pth", ".bin"}
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in allowed:
@@ -372,9 +490,12 @@ async def scan_uploaded_model(
     }
 
 
+@rate_limit("3/minute")
 @app.post("/scan/test")
 async def scan_test_models_endpoint(
-    current_user: dict = Depends(require_permission("scan"))
+    request: Request,
+    current_user: dict = Depends(require_permission("scan")),
+    num_classes: int = Query(default=10, ge=2, le=10000)
 ):
     """
     Create and scan test models — backdoored and clean.
@@ -460,10 +581,12 @@ async def scan_stats(
 # ─────────────────────────────────────────
 # Queue endpoints
 # ─────────────────────────────────────────
+@rate_limit("10/minute")
 @app.post("/scan/queue")
 async def queue_scan_endpoint(
+    request: Request,
     file: UploadFile = File(...),
-    num_classes: int = 10,
+    num_classes: int = Query(default=10, ge=2, le=10000),
     current_user: dict = Depends(require_permission("scan"))
 ):
     """
@@ -471,6 +594,14 @@ async def queue_scan_endpoint(
     Scanning happens in background.
     Use GET /scan/queue/{scan_id} to check result.
     """
+    # Validate file size
+    if file.size and file.size > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size: {MAX_FILE_SIZE_MB}MB. "
+                   f"Received: {file.size / (1024*1024):.1f}MB"
+        )
+    
     allowed = {".pt", ".pth", ".bin"}
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in allowed:

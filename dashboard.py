@@ -155,7 +155,7 @@ with tab1:
                     r = requests.post(
                         f"{API_URL}/scan/test",
                         headers=get_auth_headers(),
-                        timeout=300  # 5-minute timeout for cloud processing
+                        timeout=600  # 10-minute timeout (increased from 5 min for HF)
                     )
                     if r.status_code == 200:
                         data = r.json()
@@ -183,7 +183,7 @@ with tab1:
                         )},
                         params={"num_classes": num_classes},
                         headers=get_auth_headers(),
-                        timeout=600
+                        timeout=900  # 15-minute timeout (increased from 10 min)
                     )
                     if r.status_code == 200:
                         result = r.json()
