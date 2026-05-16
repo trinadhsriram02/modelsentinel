@@ -45,33 +45,38 @@ ModelSentinel runs two peer-reviewed academic detection algorithms against every
 
 ## 🏗️ Architecture
 
-```
-User → Streamlit Dashboard → FastAPI Backend
-                                   │
-                     ┌─────────────┴──────────────┐
-                     │                             │
-              JWT Auth + RBAC              Rate Limiting (slowapi)
-                     │
-              File Upload (aiofiles, 1 MB chunks)
-                     │
-          ThreadPoolExecutor (max 3 workers)
-                     │
-         ┌───────────┴───────────┐
-         │                       │
-   Neural Cleanse          Activation Clustering
-   (MAD scoring)           (silhouette score)
-         │                       │
-         └───────────┬───────────┘
-                     │
-          Groq LLaMA 3.1 → Pydantic ThreatReport
-                     │
-          Risk Score 0–100 + Verdict
-                     │
-         ┌───────────┴───────────┐
-         │                       │
-    SQLite (WAL)           TTLCache (1 hr)
-         │
-    JSON Response → Streamlit → User
+```mermaid
+graph TD
+    User([User]) --> UI[Streamlit Dashboard]
+    UI --> API[FastAPI Backend]
+
+    subgraph Infrastructure [Backend Infrastructure]
+        API --> Auth{JWT Auth & RBAC}
+        API --> Rate{Rate Limiting}
+        Auth --> Upload[File Upload<br/>aiofiles, 1MB chunks]
+        Rate --> Upload
+        Upload --> ThreadPool[ThreadPoolExecutor<br/>max 3 workers]
+    end
+
+    subgraph Detection [Detection Engines]
+        ThreadPool --> NC[Neural Cleanse<br/>MAD scoring]
+        ThreadPool --> AC[Activation Clustering<br/>silhouette score]
+    end
+
+    subgraph Analysis [Threat Analysis]
+        NC --> LLM[Groq LLaMA 3.1<br/>Pydantic ThreatReport]
+        AC --> LLM
+        LLM --> Score{Risk Score 0–100<br/>& Verdict}
+    end
+
+    subgraph Storage [Data Persistence]
+        Score --> DB[(SQLite WAL)]
+        Score --> Cache[(TTLCache 1 hr)]
+    end
+
+    DB --> Res[JSON Response]
+    Cache --> Res
+    Res --> UI
 ```
 
 ---
