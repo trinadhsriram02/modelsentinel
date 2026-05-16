@@ -4,6 +4,8 @@ Scans PyTorch models for backdoors before they reach production. Automatically b
 
 > **Live Demo:** https://huggingface.co/spaces/trinadhsriram02/ModelSentinel
 >
+>**Live API:** https://huggingface.co/spaces/trinadhsriram02/ModelSentinel-API
+>
 > **Live API Docs:** https://trinadhsriram02-modelsentinel-api.hf.space/docs
 >
 > **Demo Video:** [Watch here](paste-loom-link-here)
