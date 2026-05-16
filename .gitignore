@@ -7,3 +7,5 @@ __pycache__/
 *.bin
 models/
 src/data/scans.db
+.pytest_cache/
+uploaded_models/
